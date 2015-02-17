@@ -1,0 +1,15 @@
+---
+
+- name: Update the apt repositories
+
+
+- name: Install some prerequisites
+  apt:
+    name={{ item }}
+    state=latest
+    update_cache=yes
+  with_items:
+    - ant
+    - maven
+    - imagemagick
+    - ftp

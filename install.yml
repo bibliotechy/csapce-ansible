@@ -1,0 +1,174 @@
+---
+
+
+- name: Set up the application
+  hosts: all
+  sudo: yes
+  tasks:
+    - name: Install some prerequisites
+      apt:
+        name={{ item }}
+        state=latest
+        update_cache=yes
+      with_items:
+        - ant
+        - maven
+        - imagemagick
+        - ftp
+        - python-psycopg2
+    - name: install key for postgres
+      apt_key:
+        url=https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        state=present
+    - name: add the recent postgres ppa
+      apt_repository:
+        repo: "deb http://apt.postgresql.org/pub/repos/apt/ {{ansible_distribution_release}}-pgdg main"
+        state: present
+      tags: postgres
+    - name: install postgres
+      apt:
+        name={{item}}
+        state=latest
+        update_cache=yes
+      with_items:
+        - postgresql-9.3 
+        - postgresql-contrib-9.3 
+      tags: postgres
+    - name: Upate the pg_hba.conf
+      template:
+        src=templates/pg_hba.conf.j2
+        dest=/etc/postgresql/9.3/main/pg_hba.conf
+      notify: restart pgsql
+      tags: postgres
+    - name: make sure postgres is listening for reporting
+      lineinfile:
+        line="{{item}}"
+        dest=/etc/postgresql/9.3/main/postgresql.conf
+        state=present
+      with_items:
+        - "max_prepared_transactions = 64"
+        - "listen_addresses = '*'"
+      notify: restart pgsql
+      tags: postgres
+    - name: create csadmin db account
+      sudo_user: postgres
+      postgresql_user:
+        name: "csadmin"
+        password: "{{ cspace_db_admin_password }}"
+        role_attr_flags: SUPERUSER,INHERIT,NOCREATEDB,NOCREATEROLE,NOREPLICATION
+      tags:
+        - postgres
+
+    - name: copy pg_casts.sql to server
+      copy:
+        src: files/pg_casts.sql
+        dest: /home/{{ ansible_ssh_user }}/pg_casts.sql
+        owner: postgres
+        group: postgres
+      register: pg_casts
+      tags:
+        - postgres
+
+    - name: run pg_casts.sql
+      sudo_user: postgres
+      shell:
+        psql -U postgres -d template1 -f /home/{{ ansible_ssh_user }}/pg_casts.sql
+      when: pg_casts.changed
+      notify:
+        - restart pgsql
+      tags:
+        - postgres
+    - name: Download the cspace tomcat
+      local_action:
+        get_url
+        url="ftp://source.collectionspace.org/pub/collectionspace/releases/4.1.1/cspace-server-4.1.1.tar.gz"
+        dest=downloads/cspace-server-4.1.1.tar.gz
+      sudo: false
+    - name: Unzip the tomcat into place
+      unarchive:
+        src=downloads/cspace-server-4.1.1.tar.gz
+        dest=/usr/local/share/
+        mode=0755
+        owner=vagrant
+    - name: set up the required environemtn variables
+      lineinfile:
+        line={{item}}
+        dest=/etc/environment
+        state=present
+      with_items:
+        - CSPACE_JEESERVER_HOME="/usr/local/share/apache-tomcat-6.0.33"
+        - CATALINA_HOME=$CSPACE_JEESERVER_HOME
+        - CATALINA_PID="$CSPACE_JEESERVER_HOME/bin/tomcat.pid"
+        - CATALINA_OPTS="-Xmx1024m -XX:MaxPermSize=384m"
+        - JAVA_HOME="/usr/lib/jvm/java-7-oracle/"
+        - DB_CSADMIN_PASSWORD="password"
+        - DB_NUXEO_PASSWORD="password"
+        - DB_CSPACE_PASSWORD="password"
+        - DB_READER_PASSWORD="password"
+        - ANT_OPTS="-Xmx768m -XX:MaxPermSize=512m"
+        - MAVEN_OPTS="-Xmx768m -XX:MaxPermSize=512m"
+        - DB_HOST="{{db_host}}"
+        - CSPACE_INSTANCE_ID="{{cspace_instance_id }}"  
+    - name: create collectionspace-source directory
+      file:
+        path=/home/{{ansible_ssh_user}}/collectionspace-source
+        state=directory
+      sudo: no
+    - name: Download the application and services sources
+      local_action:
+        get_url
+        url={{item.url}}
+        dest=downloads/{{item.name}}.tar.gz
+      sudo: no
+      with_items:
+        - { url: "https://github.com/collectionspace/application/archive/v4.1.1.tar.gz", name: "app-source" }
+        - { url: "https://github.com/collectionspace/services/archive/v4.1.1.tar.gz", name: "services-source" }
+    - name: Unarchive the cspace sources into place
+      unarchive:
+        src=downloads/{{item.name}}.tar.gz
+        dest=/home/{{ansible_ssh_user}}/collectionspace-source/
+        creates=/home/{{ansible_ssh_user}}/collectionspace-source/{{item.tar_dir}}
+      sudo: no
+      with_items:
+        - { name: "app-source", tar_dir: "application-4.1.1" }
+        - { name: "services-source", tar_dir: "services-4.1.1" }
+    - name: Move sources to the right dir
+      shell:
+        cp -R /home/{{ansible_ssh_user}}/collectionspace-source/{{item.tar_dir}} /home/{{ansible_ssh_user}}/collectionspace-source/{{item.dir}}
+        creates=/home/{{ansible_ssh_user}}/collectionspace-source/{{item.dir}}
+      with_items:
+        - { tar_dir: "application-4.1.1", dir: "application" }
+        - { tar_dir: "services-4.1.1", dir: "services" }
+    - name: Install the core tenant settings file
+      template:
+        src=templates/settings.xml.j2
+        dest=/home/{{ansible_ssh_user}}/collectionspace-source/application/tomcat-main/src/main/resources/tenants/core/settings.xml
+    - name: Update the pom.xml
+      copy:
+        src=files/pom.xml
+        dest=/home/{{ansible_ssh_user}}/collectionspace-source/application/pom.xml
+    - name: Install application with maven
+      shell:
+        mvn clean install -DskipTests
+        chdir=/home/{{ansible_ssh_user}}/collectionspace-source/{{item}}
+      with_items:
+        - application
+        - services
+    - name: permissions clean up
+      file:
+        path=/usr/local/share/apache-tomcat-6.0.33
+        state=directory
+        recursive=true
+        owner={{ansible_ssh_user}}
+        mode=0775
+  handlers:
+    - name: restart pgsql
+      service:
+        name=postgresql
+        status=restarted
+
+- name: java
+  hosts: all
+  roles:
+    - ansible-oracle_java7-role
+  sudo: yes
