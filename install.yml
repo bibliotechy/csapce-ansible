@@ -78,6 +78,10 @@
         - restart pgsql
       tags:
         - postgres
+    
+    - name: Create the cspace user
+      user: name=cspace shell=/bin/bash 
+    
     - name: Download the cspace tomcat
       local_action:
         get_url
@@ -89,8 +93,8 @@
         src=downloads/cspace-server-4.1.1.tar.gz
         dest=/usr/local/share/
         mode=0755
-        owner=vagrant
-    - name: set up the required environemtn variables
+        owner=cspace
+    - name: set up the required environemt variables
       lineinfile:
         line={{item}}
         dest=/etc/environment
@@ -109,58 +113,6 @@
         - MAVEN_OPTS="-Xmx768m -XX:MaxPermSize=512m"
         - DB_HOST="{{db_host}}"
         - CSPACE_INSTANCE_ID="{{cspace_instance_id }}"  
-    - name: create collectionspace-source directory
-      file:
-        path=/home/{{ansible_ssh_user}}/collectionspace-source
-        state=directory
-      sudo: no
-    - name: Download the application and services sources
-      local_action:
-        get_url
-        url={{item.url}}
-        dest=downloads/{{item.name}}.tar.gz
-      sudo: no
-      with_items:
-        - { url: "https://github.com/collectionspace/application/archive/v4.1.1.tar.gz", name: "app-source" }
-        - { url: "https://github.com/collectionspace/services/archive/v4.1.1.tar.gz", name: "services-source" }
-    - name: Unarchive the cspace sources into place
-      unarchive:
-        src=downloads/{{item.name}}.tar.gz
-        dest=/home/{{ansible_ssh_user}}/collectionspace-source/
-        creates=/home/{{ansible_ssh_user}}/collectionspace-source/{{item.tar_dir}}
-      sudo: no
-      with_items:
-        - { name: "app-source", tar_dir: "application-4.1.1" }
-        - { name: "services-source", tar_dir: "services-4.1.1" }
-    - name: Move sources to the right dir
-      shell:
-        cp -R /home/{{ansible_ssh_user}}/collectionspace-source/{{item.tar_dir}} /home/{{ansible_ssh_user}}/collectionspace-source/{{item.dir}}
-        creates=/home/{{ansible_ssh_user}}/collectionspace-source/{{item.dir}}
-      with_items:
-        - { tar_dir: "application-4.1.1", dir: "application" }
-        - { tar_dir: "services-4.1.1", dir: "services" }
-    - name: Install the core tenant settings file
-      template:
-        src=templates/settings.xml.j2
-        dest=/home/{{ansible_ssh_user}}/collectionspace-source/application/tomcat-main/src/main/resources/tenants/core/settings.xml
-    - name: Update the pom.xml
-      copy:
-        src=files/pom.xml
-        dest=/home/{{ansible_ssh_user}}/collectionspace-source/application/pom.xml
-    - name: Install application with maven
-      shell:
-        mvn clean install -DskipTests
-        chdir=/home/{{ansible_ssh_user}}/collectionspace-source/{{item}}
-      with_items:
-        - application
-        - services
-    - name: permissions clean up
-      file:
-        path=/usr/local/share/apache-tomcat-6.0.33
-        state=directory
-        recursive=true
-        owner={{ansible_ssh_user}}
-        mode=0775
   handlers:
     - name: restart pgsql
       service:
@@ -170,5 +122,5 @@
 - name: java
   hosts: all
   roles:
-    - ansible-oracle_java7-role
+    - briancoca.oracle_java7
   sudo: yes
