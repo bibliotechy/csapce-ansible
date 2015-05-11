@@ -25,11 +25,14 @@ VAGRANTFILE_API_VERSION = "2"
 
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   config.vm.define "cspace" do |app|
-    app.vm.box = "precise64"
-    app.vm.box_url = "http://cloud-images.ubuntu.com/vagrant/precise/current/precise-server-cloudimg-amd64-vagrant-disk1.box"
+    app.vm.box = "trusty64"
+    app.vm.box_url = "https://vagrantcloud.com/ubuntu/boxes/trusty64"
     app.vm.network :private_network, ip: "10.10.10.100"
+    app.vm.network :forwarded_port, guest: 8180, host: 8180
+    app.vm.network :forwarded_port, guest: 5432, host: 2345
+    app.vm.network :forwarded_port, guest: 1043, host:1043
     app.vm.provider "virtualbox" do |v|
-      v.customize ["modifyvm", :id, "--memory", 2048]
+      v.customize ["modifyvm", :id, "--memory", 3072]
         case os
         when /linux/
           v.customize ["modifyvm", :id, "--cpus", `grep "^processor" /proc/cpuinfo | wc -l`.chomp]
@@ -40,6 +43,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
     end
 
     
+    config.vm.synced_folder "src/", "/home/cspace/custom_cspace_source/", owner: "cspace", group: "cspace"  
     config.vm.provision :ansible do |ansible|
       ansible.host_key_checking = false
       ansible.playbook = "install.yml"
